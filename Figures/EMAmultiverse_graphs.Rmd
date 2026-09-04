@@ -1,0 +1,1110 @@
+---
+title: "EMAMultiverseGraphs"
+author: "Ben Scheve"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+# Load necessary packages
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(patchwork)
+library(readr)
+library(stringr)
+```
+
+Negative Affect
+```{r}
+# Define file paths for the five CSVs
+file_paths_na <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SS_multi.csv"
+)
+
+# Define titles for each coefficient plot
+titles_na <- c(
+  "NA and Reappraisal",
+  "NA and Suppression",
+  "NA and Distraction",
+  "NA and Selective Attention",
+  "NA and Situation Selection"
+)
+
+# Function to Create Coefficient Plot
+create_coefficient_plot <- function(file_path, title) {
+  data <- read.csv(file_path)
+  
+  # Determine colors based on whether the confidence interval includes 0
+  data$Color <- ifelse(data$Lower > 0 | data$Upper < 0, "green3", "tomato")
+  
+  # Add an index column
+  data$Index <- seq_len(nrow(data))
+  
+  ggplot(data, aes(x = Index, y = Parameter)) +
+    geom_point(aes(color = Color), size = 4, alpha = 0.5) +  # Only plot points with color coding
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 2) +
+    scale_color_identity() +
+    ylim(-0.35, 0.5) +   # Changed y-limit to 0.5
+    labs(
+      title = title,
+      x = "",
+      y = "Beta Coefficient"
+    ) +
+    theme_minimal(base_size = 6) +
+    theme(
+      plot.title = element_text(size = 44, hjust = 0.2, face = "bold"), # Slightly bigger title
+      axis.text.x = element_text(size = 34, face = "bold"),
+      axis.text.y = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      axis.title.x = element_text(size = 1),
+      legend.position = "none"  # Ensure no legend appears
+    )
+}
+
+# Function to parse specifications
+parse_specification <- function(spec) {
+  list(
+    Proportion = ifelse(grepl("Proportion", spec), 1, 0),
+    Pearson = ifelse(grepl("Pearson", spec), 1, 0),
+    Spearman = ifelse(grepl("Spearman", spec), 1, 0),
+    Euclid = ifelse(grepl("Euclid", spec), 1, 0),
+    Pairwise = ifelse(grepl("Pairwise", spec), 1, 0),
+    Entropy = ifelse(grepl("_Entropy", spec) & !grepl("No_Entropy", spec), 1, 0),
+    More_Than_10_Responses = ifelse(grepl("More_Than_10_Responses|MT10R_AND_MT20S", spec), 1, 0),
+    More_Than_20_Seconds = ifelse(grepl("More_Than_20_Seconds|MT10R_AND_MT20S", spec), 1, 0),
+    Start_Date = ifelse(grepl("Start_Date|Date_and_Time", spec), 1, 0),
+    Response_Window = ifelse(grepl("Response_Window|Date_and_Time", spec), 1, 0),
+    Demographics = ifelse(grepl("_Demographics", spec) & !grepl("No_Demographics", spec), 1, 0),
+    Baseline_ER = ifelse(grepl("_Baseline_ER", spec) & !grepl("No_Baseline_ER", spec), 1, 0)
+  )
+}
+
+create_specification_plot <- function(file_path) {
+  data <- read.csv(file_path)
+  
+  # Apply the parsing function to each row and create a new dataframe
+  parsed_data <- do.call(rbind, lapply(data$Specification, parse_specification))
+  parsed_data <- as.data.frame(parsed_data)
+  
+  # Add an Index column for alignment with the parameter plot
+  parsed_data$Index <- seq_len(nrow(parsed_data))
+  
+  parsed_data <- parsed_data %>%
+    mutate(across(everything(), as.numeric))
+  
+  # Define the desired order of variables for plotting
+  variable_order <- c(
+    "More_Than_10_Responses", "More_Than_20_Seconds", "Proportion", 
+    "Pearson", "Spearman", "Euclid", "Pairwise", 
+    "Entropy", "Start_Date", "Response_Window", "Demographics", "Baseline_ER"
+  )
+  
+  # Transform the data to long format for ggplot
+  long_data <- parsed_data %>%
+    pivot_longer(cols = -Index, names_to = "Variable", values_to = "Value") %>%
+    mutate(
+      Variable = gsub("More_Than_10_Responses", ">10_Resp", Variable),
+      Variable = gsub("More_Than_20_Seconds", ">20_Sec", Variable),
+      Variable = gsub("Response_Window", "Resp_Wind", Variable),
+      Variable = factor(Variable, levels = c(
+        ">10_Resp", ">20_Sec", "Proportion", 
+        "Pearson", "Spearman", "Euclid", "Pairwise", 
+        "Entropy", "Start_Date", "Resp_Wind", "Demographics", "Baseline_ER"
+      )),
+      Value = as.factor(Value)  # Convert Value to a factor for discrete scale
+    )
+  
+  # Define color mapping for variable groups
+  color_mapping <- c(
+    ">10_Resp" = "firebrick", ">20_Sec" = "firebrick",
+    "Proportion" = "steelblue",
+    "Pearson" = "seagreen", "Spearman" = "seagreen", "Euclid" = "seagreen", 
+    "Pairwise" = "darkgoldenrod", 
+    "Entropy" = "sienna", "Start_Date" = "sienna", "Resp_Wind" = "sienna", 
+    "Demographics" = "sienna", "Baseline_ER" = "sienna"
+  )
+  
+  # Ensure fill mapping correctly applies colors only to "1" values
+  long_data <- long_data %>%
+    mutate(Fill = ifelse(Value == "1", as.character(Variable), NA))
+  
+  ggplot(long_data, aes(x = Index, y = Variable, fill = Fill)) +
+    geom_tile(height = 0.8) +  # Add height to create gaps between rows
+    scale_fill_manual(
+      values = color_mapping,  # Just use the color mapping
+      na.value = "white",  # Make NA values appear white
+      name = "Value"
+      ) +
+    labs(
+      x = "Specification",
+      y = "Analytic Dimension"
+    ) +
+    theme_minimal(base_size = 8) +
+    theme(
+      axis.text.x = element_text(size = 30, face = "bold"),
+      axis.text.y = element_text(size = 30, face = "bold"),
+      axis.title.x = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "none"
+    )
+}
+
+plots_na <- list()
+for (i in seq_along(file_paths_na)) {
+  coefficient_plot <- create_coefficient_plot(file_paths_na[i], titles_na[i])
+  specification_plot <- create_specification_plot(file_paths_na[i])
+  plots_na[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))  # Stack plots with adjusted heights
+}
+
+final_plot_na <- wrap_plots(plots_na, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Second-Order Multiverse Analysis: Negative Affect (NA)", theme = theme(plot.title = element_text(size = 54, hjust = 0.5, face = "bold")))
+```
+
+Positive Affect
+```{r}
+# Define file paths for the five CSVs
+file_paths_pa <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SS_multi.csv"
+)
+
+# Define titles for each coefficient plot
+titles_pa <- c(
+  "PA and Reappraisal",
+  "PA and Suppression",
+  "PA and Distraction",
+  "PA and Selective Attention",
+  "PA and Situation Selection"
+)
+
+plots_pa <- list()
+for (i in seq_along(file_paths_pa)) {
+  coefficient_plot <- create_coefficient_plot(file_paths_pa[i], titles_pa[i])
+  specification_plot <- create_specification_plot(file_paths_pa[i])
+  plots_pa[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))
+}
+
+final_plot_pa <- wrap_plots(plots_pa, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Second-Order Multiverse Analysis: Positive Affect (PA)", theme = theme(plot.title = element_text(size = 54, hjust = 0.5, face = "bold")))
+```
+Stress
+```{r}
+# Define file paths for the five CSVs
+file_paths_st <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SS_multi.csv"
+)
+
+# Define titles for each coefficient plot
+titles_st <- c(
+  "ST and Reappraisal",
+  "ST and Suppression",
+  "ST and Distraction",
+  "ST and Selective Attention",
+  "ST and Situation Selection"
+)
+
+plots_st <- list()
+for (i in seq_along(file_paths_st)) {
+  coefficient_plot <- create_coefficient_plot(file_paths_st[i], titles_st[i])
+  specification_plot <- create_specification_plot(file_paths_st[i])
+  plots_st[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))
+}
+
+final_plot_st <- wrap_plots(plots_st, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Second-Order Multiverse Analysis: Stress (ST)", theme = theme(plot.title = element_text(size = 54, hjust = 0.5, face = "bold")))
+```
+
+```{r}
+final_plot_all <- final_plot_na / final_plot_pa / final_plot_st + 
+  plot_layout(ncol = 1) +
+  plot_annotation(
+    title = "Second-Order Multiverse Analysis",
+    theme = theme(plot.title = element_text(size = 64, hjust = 0.5, face = "bold")),
+    tag_levels = "a"
+  )
+
+ggsave(
+  filename = "second_order_multiverse_analysis.png",
+  plot = final_plot_all,
+  width = 60,
+  height = 60,  # Three times the original height to keep proportions
+  dpi = 300,
+  limitsize = FALSE
+)
+```
+
+
+# Single predictor
+Positive Affect
+```{r}
+# Define file paths for the five CSVs
+file_paths <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_RP_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SP_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_DS_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SA_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SS_single.csv"
+)
+
+# Define titles for each coefficient plot
+titles <- c(
+  "NA and Reappraisal",
+  "NA and Suppression",
+  "NA and Distraction",
+  "NA and Selective Attention",
+  "NA and Situation Selection"
+)
+
+# Create and combine the plots
+plots <- list()
+for (i in seq_along(file_paths)) {
+  coefficient_plot <- create_coefficient_plot(file_paths[i], titles[i])
+  specification_plot <- create_specification_plot(file_paths[i])
+  plots[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))  # Stack plots with adjusted heights
+}
+
+# Combine all stacked plots into a 2x5 grid
+final_plot <- wrap_plots(plots, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Negative Affect (NA) Multiverse Analysis (Independent)", theme = theme(plot.title = element_text(size = 40, hjust = 0.5, face = "bold")))
+
+ggsave(
+  filename = "negative_affect_single_analysis.png",  # File name for the image
+  plot = final_plot,                          # The plot to save
+  width = 52,                                 # Width of the image (in inches)
+  height = 20,                                 # Height of the image (in inches)
+  dpi = 300,                                   # Resolution (dots per inch)
+  limitsize = FALSE
+)
+```
+
+Positive Affect
+```{r}
+# Define file paths for the five CSVs
+file_paths <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_RP_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SP_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_DS_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SA_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SS_single.csv"
+)
+
+# Define titles for each coefficient plot
+titles <- c(
+  "PA and Reappraisal",
+  "PA and Suppression",
+  "PA and Distraction",
+  "PA and Selective Attention",
+  "PA and Situation Selection"
+)
+
+# Create and combine the plots
+plots <- list()
+for (i in seq_along(file_paths)) {
+  coefficient_plot <- create_coefficient_plot(file_paths[i], titles[i])
+  specification_plot <- create_specification_plot(file_paths[i])
+  plots[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))  # Stack plots with adjusted heights
+}
+
+# Combine all stacked plots into a 2x5 grid
+final_plot <- wrap_plots(plots, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Positive Affect (PA) Multiverse Analysis (Independent)", theme = theme(plot.title = element_text(size = 40, hjust = 0.5, face = "bold")))
+
+ggsave(
+  filename = "positive_affect_single_analysis.png",  # File name for the image
+  plot = final_plot,                          # The plot to save
+  width = 52,                                 # Width of the image (in inches)
+  height = 20,                                 # Height of the image (in inches)
+  dpi = 300,                                   # Resolution (dots per inch)
+  limitsize = FALSE
+)
+```
+Stress
+```{r}
+# Define file paths for the five CSVs
+file_paths <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_RP_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SP_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_DS_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SA_single.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SS_single.csv"
+)
+
+# Define titles for each coefficient plot
+titles <- c(
+  "ST and Reappraisal",
+  "ST and Suppression",
+  "ST and Distraction",
+  "ST and Selective Attention",
+  "ST and Situation Selection"
+)
+
+# Create and combine the plots
+plots <- list()
+for (i in seq_along(file_paths)) {
+  coefficient_plot <- create_coefficient_plot(file_paths[i], titles[i])
+  specification_plot <- create_specification_plot(file_paths[i])
+  plots[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))  # Stack plots with adjusted heights
+}
+
+# Combine all stacked plots into a 2x5 grid
+final_plot <- wrap_plots(plots, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Stress (ST) Multiverse Analysis (Independent)", theme = theme(plot.title = element_text(size = 40, hjust = 0.5, face = "bold")))
+
+ggsave(
+  filename = "stress_single_analysis.png",  # File name for the image
+  plot = final_plot,                          # The plot to save
+  width = 52,                                 # Width of the image (in inches)
+  height = 20,                                 # Height of the image (in inches)
+  dpi = 300, # Resolution (dots per inch)
+  limitsize = FALSE 
+)
+```
+
+In text results
+```{r}
+# Organize the sets of files you already used
+all_blocks <- list(
+  NA_multi = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_RP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_DS_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SA_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SS_multi.csv"
+  ),
+  PA_multi = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_RP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_DS_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SA_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SS_multi.csv"
+  ),
+  ST_multi = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_RP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_DS_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SA_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SS_multi.csv"
+  ),
+  NA_single = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_RP_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SP_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_DS_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SA_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SS_single.csv"
+  ),
+  PA_single = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_RP_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SP_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_DS_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SA_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SS_single.csv"
+  ),
+  ST_single = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_RP_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SP_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_DS_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SA_single.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SS_single.csv"
+  )
+)
+
+# Helper to extract strategy name from file path
+get_strategy <- function(path) {
+  sub(".*_(RP|SP|DS|SA|SS)_(multi|single)\\.csv$", "\\1", path)
+}
+get_blocktype <- function(blockname) {
+  if (grepl("multi$", blockname)) "Joint" else "Single"
+}
+
+results_summary <- bind_rows(lapply(names(all_blocks), function(blockname) {
+  files <- all_blocks[[blockname]]
+  bind_rows(lapply(files, function(fp) {
+    dat <- read.csv(fp)
+    tibble(
+      Outcome = substr(blockname, 1, 2),  # NA, PA, ST
+      Block   = get_blocktype(blockname),
+      Strategy = get_strategy(fp),
+      Total   = nrow(dat),
+      Sig     = sum(dat$Lower > 0 | dat$Upper < 0, na.rm = TRUE)
+    )
+  }))
+})) %>%
+  mutate(Percent = round(100 * Sig / Total, 3))
+
+print(results_summary, n = Inf)
+```
+```{r}
+# Helper: parse a shared spec id by removing "<Outcome>_<Strategy>_" and ".csv"
+parse_spec_id <- function(spec, outcome, strategy) {
+  spec |>
+    sub("\\.csv$", "", x = _) |>
+    sub(paste0("^", outcome, "_", strategy, "_"), "", x = _)
+}
+
+# Core: for an outcome ("NA", "PA", "ST") and its *_multi files, compute counts
+get_significance_summary <- function(outcome, files_vec) {
+  dat_list <- lapply(files_vec, function(fp) {
+    strategy <- get_strategy(fp)
+
+    df <- read.csv(fp, stringsAsFactors = FALSE)
+
+    # Be robust to slight name differences in the specification column
+    spec_col <- if ("Specification" %in% names(df)) {
+      "Specification"
+    } else {
+      cand <- names(df)[grepl("pec", names(df), ignore.case = TRUE)]
+      if (length(cand) == 0) stop("Couldn't find a Specification column in: ", fp)
+      cand[1]
+    }
+
+    tibble(
+      spec_id  = parse_spec_id(df[[spec_col]], outcome, strategy),
+      Strategy = strategy,
+      SigFlag  = (df$Lower > 0 | df$Upper < 0)
+    )
+  })
+
+  combined_long <- bind_rows(dat_list)
+
+  strategies <- c("RP", "SP", "DS", "SA", "SS")
+  wide <- combined_long |>
+    distinct(spec_id, Strategy, .keep_all = TRUE) |>
+    tidyr::pivot_wider(
+      id_cols = spec_id,
+      names_from = Strategy,
+      values_from = SigFlag,
+      values_fill = FALSE
+    )
+
+  present <- intersect(strategies, names(wide))
+  wide <- wide |>
+    mutate(
+      Outcome = outcome,
+      Num_Significant_Strategies = rowSums(across(all_of(present)), na.rm = TRUE)
+    )
+
+  total_specs <- nrow(wide)
+
+  distribution <- wide |>
+    count(Outcome, Num_Significant_Strategies, name = "Num_Specifications") |>
+    complete(
+      Outcome = outcome,
+      Num_Significant_Strategies = 0:5,
+      fill = list(Num_Specifications = 0)
+    ) |>
+    mutate(Percent = round(100 * Num_Specifications / total_specs, 3)) |>
+    arrange(Outcome, Num_Significant_Strategies)
+
+  list(
+    by_spec = wide |> arrange(spec_id),
+    distribution = distribution
+  )
+}
+
+# Run for each outcome using the *_multi (joint) sets
+na_res <- get_significance_summary("NA", all_blocks$NA_multi)
+pa_res <- get_significance_summary("PA", all_blocks$PA_multi)
+st_res <- get_significance_summary("ST", all_blocks$ST_multi)
+
+# Combined distribution table
+signif_strategy_distribution <- bind_rows(
+  na_res$distribution, pa_res$distribution, st_res$distribution
+)
+
+print(signif_strategy_distribution, n = Inf)
+```
+
+--NO COVARIATES--
+```{r}
+# Helper: returns TRUE if any covariate analytic dimension is present
+contains_covariate <- function(spec) {
+  parsed <- parse_specification(spec)
+  # These are the covariates (coded sienna)
+  covariates <- c("Entropy", "Start_Date", "Response_Window", "Demographics", "Baseline_ER")
+  any(unlist(parsed)[covariates] == 1)
+}
+
+# Function to Create Coefficient Plot (subsetted to no covariate specs)
+create_coefficient_plot_no_cov <- function(file_path, title) {
+  data <- read.csv(file_path)
+  # Filter out specs with any covariate
+  data <- data[!sapply(data$Specification, contains_covariate), ]
+  # Determine colors based on whether the confidence interval includes 0
+  data$Color <- ifelse(data$Lower > 0 | data$Upper < 0, "green3", "tomato")
+  # Add an index column
+  data$Index <- seq_len(nrow(data))
+  ggplot(data, aes(x = Index, y = Parameter)) +
+    geom_point(aes(color = Color), size = 4, alpha = 0.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 2) +
+    scale_color_identity() +
+    ylim(-0.35, 0.75) +
+    labs(
+      title = title,
+      x = "",
+      y = "Beta Coefficient"
+    ) +
+    theme_minimal(base_size = 6) +
+    theme(
+      plot.title = element_text(size = 38, hjust = 0.2, face = "bold"),
+      axis.text.x = element_text(size = 34, face = "bold"),
+      axis.text.y = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      axis.title.x = element_text(size = 1),
+      legend.position = "none"
+    )
+}
+
+# Function to Create Specification Plot (subsetted to no covariate specs)
+create_specification_plot_no_cov <- function(file_path) {
+  data <- read.csv(file_path)
+  # Filter out specs with any covariate
+  data <- data[!sapply(data$Specification, contains_covariate), ]
+  # Apply the parsing function to each row and create a new dataframe
+  parsed_data <- do.call(rbind, lapply(data$Specification, parse_specification))
+  parsed_data <- as.data.frame(parsed_data)
+  parsed_data$Index <- seq_len(nrow(parsed_data))
+  parsed_data <- parsed_data %>%
+    mutate(across(everything(), as.numeric))
+  variable_order <- c(
+    "More_Than_10_Responses", "More_Than_20_Seconds", "Proportion", 
+    "Pearson", "Spearman", "Euclid", "Pairwise", 
+    "Entropy", "Start_Date", "Response_Window", "Demographics", "Baseline_ER"
+  )
+  long_data <- parsed_data %>%
+    pivot_longer(cols = -Index, names_to = "Variable", values_to = "Value") %>%
+    mutate(
+      Variable = gsub("More_Than_10_Responses", ">10_Resp", Variable),
+      Variable = gsub("More_Than_20_Seconds", ">20_Sec", Variable),
+      Variable = gsub("Response_Window", "Resp_Wind", Variable),
+      Variable = factor(Variable, levels = c(
+        ">10_Resp", ">20_Sec", "Proportion", 
+        "Pearson", "Spearman", "Euclid", "Pairwise", 
+        "Entropy", "Start_Date", "Resp_Wind", "Demographics", "Baseline_ER"
+      )),
+      Value = as.factor(Value)
+    )
+  color_mapping <- c(
+    ">10_Resp" = "firebrick", ">20_Sec" = "firebrick",
+    "Proportion" = "steelblue",
+    "Pearson" = "seagreen", "Spearman" = "seagreen", "Euclid" = "seagreen", 
+    "Pairwise" = "darkgoldenrod", 
+    "Entropy" = "sienna", "Start_Date" = "sienna", "Resp_Wind" = "sienna", 
+    "Demographics" = "sienna", "Baseline_ER" = "sienna"
+  )
+  long_data <- long_data %>%
+    mutate(Fill = ifelse(Value == "1", as.character(Variable), NA))
+  ggplot(long_data, aes(x = Index, y = Variable, fill = Fill)) +
+    geom_tile(height = 0.8) +
+    scale_fill_manual(
+      values = color_mapping,
+      na.value = "white",
+      name = "Value"
+    ) +
+    labs(
+      x = "Specification",
+      y = "Analytic Dimension"
+    ) +
+    theme_minimal(base_size = 8) +
+    theme(
+      axis.text.x = element_text(size = 30, face = "bold"),
+      axis.text.y = element_text(size = 30, face = "bold"),
+      axis.title.x = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "none"
+    )
+}
+
+# ----------- Negative Affect -----------
+file_paths_NA <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\NA_SS_multi.csv"
+)
+titles_NA <- c(
+  "NA and Reappraisal",
+  "NA and Suppression",
+  "NA and Distraction",
+  "NA and Selective Attention",
+  "NA and Situation Selection"
+)
+plots_NA <- list()
+for (i in seq_along(file_paths_NA)) {
+  coeff <- create_coefficient_plot_no_cov(file_paths_NA[i], titles_NA[i])
+  spec <- create_specification_plot_no_cov(file_paths_NA[i])
+  plots_NA[[i]] <- coeff / spec + plot_layout(heights = c(2, 1))
+}
+final_plot_NA <- wrap_plots(plots_NA, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Negative Affect (NA) Multiverse Analysis\n(no covariate specifications)", theme = theme(plot.title = element_text(size = 50, hjust = 0.5, face = "bold")))
+ggsave(
+  filename = "negative_affect_analysis_no_covariate.png",
+  plot = final_plot_NA,
+  width = 52,
+  height = 20,
+  dpi = 300,
+  limitsize = FALSE
+)
+
+# ----------- Positive Affect -----------
+file_paths_PA <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\PA_SS_multi.csv"
+)
+titles_PA <- c(
+  "PA and Reappraisal",
+  "PA and Suppression",
+  "PA and Distraction",
+  "PA and Selective Attention",
+  "PA and Situation Selection"
+)
+plots_PA <- list()
+for (i in seq_along(file_paths_PA)) {
+  coeff <- create_coefficient_plot_no_cov(file_paths_PA[i], titles_PA[i])
+  spec <- create_specification_plot_no_cov(file_paths_PA[i])
+  plots_PA[[i]] <- coeff / spec + plot_layout(heights = c(2, 1))
+}
+final_plot_PA <- wrap_plots(plots_PA, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Positive Affect (PA) Multiverse Analysis\n(no covariate specifications)", theme = theme(plot.title = element_text(size = 40, hjust = 0.5, face = "bold")))
+ggsave(
+  filename = "positive_affect_analysis_no_covariate.png",
+  plot = final_plot_PA,
+  width = 52,
+  height = 20,
+  dpi = 300,
+  limitsize = FALSE
+)
+
+# ----------- Stress -----------
+file_paths_ST <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results\\ST_SS_multi.csv"
+)
+titles_ST <- c(
+  "ST and Reappraisal",
+  "ST and Suppression",
+  "ST and Distraction",
+  "ST and Selective Attention",
+  "ST and Situation Selection"
+)
+plots_ST <- list()
+for (i in seq_along(file_paths_ST)) {
+  coeff <- create_coefficient_plot_no_cov(file_paths_ST[i], titles_ST[i])
+  spec <- create_specification_plot_no_cov(file_paths_ST[i])
+  plots_ST[[i]] <- coeff / spec + plot_layout(heights = c(2, 1))
+}
+final_plot_ST <- wrap_plots(plots_ST, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Stress (ST) Multiverse Analysis\n(no covariate specifications)", theme = theme(plot.title = element_text(size = 40, hjust = 0.5, face = "bold")))
+ggsave(
+  filename = "stress_analysis_no_covariate.png",
+  plot = final_plot_ST,
+  width = 52,
+  height = 20,
+  dpi = 300,
+  limitsize = FALSE
+)
+```
+--NO ALPHA CORRECTION--
+
+Negative Affect
+```{r}
+# Define file paths for the five CSVs
+file_paths <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_SS_multi.csv"
+)
+
+# Define titles for each coefficient plot
+titles <- c(
+  "NA and Reappraisal",
+  "NA and Suppression",
+  "NA and Distraction",
+  "NA and Selective Attention",
+  "NA and Situation Selection"
+)
+
+# Function to Create Coefficient Plot
+create_coefficient_plot <- function(file_path, title) {
+  data <- read.csv(file_path)
+  
+  # Determine colors based on whether the confidence interval includes 0
+  data$Color <- ifelse(data$Lower > 0 | data$Upper < 0, "green3", "tomato")
+  
+  # Add an index column
+  data$Index <- seq_len(nrow(data))
+  
+  ggplot(data, aes(x = Index, y = Parameter)) +
+    geom_point(aes(color = Color), size = 4, alpha = 0.5) +  # Only plot points with color coding
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 2) +
+    scale_color_identity() +
+    ylim(-0.35, 0.75) +
+    labs(
+      title = title,
+      x = "",
+      y = "Beta Coefficient"
+    ) +
+    theme_minimal(base_size = 6) +
+    theme(
+      plot.title = element_text(size = 38, hjust = 0.2, face = "bold"),
+      axis.text.x = element_text(size = 34, face = "bold"),
+      axis.text.y = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      axis.title.x = element_text(size = 1),
+      legend.position = "none"  # Ensure no legend appears
+    )
+}
+
+
+# Function to parse specifications
+parse_specification <- function(spec) {
+  list(
+    Proportion = ifelse(grepl("Proportion", spec), 1, 0),
+    Pearson = ifelse(grepl("Pearson", spec), 1, 0),
+    Spearman = ifelse(grepl("Spearman", spec), 1, 0),
+    Euclid = ifelse(grepl("Euclid", spec), 1, 0),
+    Pairwise = ifelse(grepl("Pairwise", spec), 1, 0),
+    Entropy = ifelse(grepl("_Entropy", spec) & !grepl("No_Entropy", spec), 1, 0),
+    More_Than_10_Responses = ifelse(grepl("More_Than_10_Responses|MT10R_AND_MT20S", spec), 1, 0),
+    More_Than_20_Seconds = ifelse(grepl("More_Than_20_Seconds|MT10R_AND_MT20S", spec), 1, 0),
+    Start_Date = ifelse(grepl("Start_Date|Date_and_Time", spec), 1, 0),
+    Response_Window = ifelse(grepl("Response_Window|Date_and_Time", spec), 1, 0),
+    Demographics = ifelse(grepl("_Demographics", spec) & !grepl("No_Demographics", spec), 1, 0),
+    Baseline_ER = ifelse(grepl("_Baseline_ER", spec) & !grepl("No_Baseline_ER", spec), 1, 0)
+  )
+}
+
+create_specification_plot <- function(file_path) {
+  data <- read.csv(file_path)
+  
+  # Apply the parsing function to each row and create a new dataframe
+  parsed_data <- do.call(rbind, lapply(data$Specification, parse_specification))
+  parsed_data <- as.data.frame(parsed_data)
+  
+  # Add an Index column for alignment with the parameter plot
+  parsed_data$Index <- seq_len(nrow(parsed_data))
+  
+  parsed_data <- parsed_data %>%
+    mutate(across(everything(), as.numeric))
+  
+  # Define the desired order of variables for plotting
+  variable_order <- c(
+    "More_Than_10_Responses", "More_Than_20_Seconds", "Proportion", 
+    "Pearson", "Spearman", "Euclid", "Pairwise", 
+    "Entropy", "Start_Date", "Response_Window", "Demographics", "Baseline_ER"
+  )
+  
+  # Transform the data to long format for ggplot
+  long_data <- parsed_data %>%
+    pivot_longer(cols = -Index, names_to = "Variable", values_to = "Value") %>%
+    mutate(
+      Variable = gsub("More_Than_10_Responses", ">10_Resp", Variable),
+      Variable = gsub("More_Than_20_Seconds", ">20_Sec", Variable),
+      Variable = gsub("Response_Window", "Resp_Wind", Variable),
+      Variable = factor(Variable, levels = c(
+        ">10_Resp", ">20_Sec", "Proportion", 
+        "Pearson", "Spearman", "Euclid", "Pairwise", 
+        "Entropy", "Start_Date", "Resp_Wind", "Demographics", "Baseline_ER"
+      )),
+      Value = as.factor(Value)  # Convert Value to a factor for discrete scale
+    )
+  
+  # Define color mapping for variable groups
+  color_mapping <- c(
+    ">10_Resp" = "firebrick", ">20_Sec" = "firebrick",
+    "Proportion" = "steelblue",
+    "Pearson" = "seagreen", "Spearman" = "seagreen", "Euclid" = "seagreen", 
+    "Pairwise" = "darkgoldenrod", 
+    "Entropy" = "sienna", "Start_Date" = "sienna", "Resp_Wind" = "sienna", 
+    "Demographics" = "sienna", "Baseline_ER" = "sienna"
+  )
+  
+  # Ensure fill mapping correctly applies colors only to "1" values
+  long_data <- long_data %>%
+    mutate(Fill = ifelse(Value == "1", as.character(Variable), NA))
+  
+  ggplot(long_data, aes(x = Index, y = Variable, fill = Fill)) +
+    geom_tile(height = 0.8) +  # Add height to create gaps between rows
+    scale_fill_manual(
+      values = color_mapping,  # Just use the color mapping
+      na.value = "white",  # Make NA values appear white
+      name = "Value"
+      ) +
+    labs(
+      x = "Specification",
+      y = "Analytic Dimension"
+    ) +
+    theme_minimal(base_size = 8) +
+    theme(
+      axis.text.x = element_text(size = 30, face = "bold"),
+      axis.text.y = element_text(size = 30, face = "bold"),
+      axis.title.x = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "none"
+    )
+}
+
+# Create and combine the plots
+plots <- list()
+for (i in seq_along(file_paths)) {
+  coefficient_plot <- create_coefficient_plot(file_paths[i], titles[i])
+  specification_plot <- create_specification_plot(file_paths[i])
+  plots[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))  # Stack plots with adjusted heights
+}
+
+# Combine all stacked plots into a 2x5 grid
+final_plot <- wrap_plots(plots, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Negative Affect (NA) Multiverse Analysis (No Alpha Correction)", theme = theme(plot.title = element_text(size = 50, hjust = 0.5, face = "bold")))
+
+ggsave(
+  filename = "negative_affect_analysis_no_corr.png",  # File name for the image
+  plot = final_plot,                          # The plot to save
+  width = 52,                                 # Width of the image (in inches)
+  height = 20,                                 # Height of the image (in inches)
+  dpi = 300, # Resolution (dots per inch)
+  limitsize = FALSE
+)
+```
+
+Positive Affect
+```{r}
+# Define file paths for the five CSVs
+file_paths <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_SS_multi.csv"
+)
+
+# Define titles for each coefficient plot
+titles <- c(
+  "PA and Reappraisal",
+  "PA and Suppression",
+  "PA and Distraction",
+  "PA and Selective Attention",
+  "PA and Situation Selection"
+)
+
+# Create and combine the plots
+plots <- list()
+for (i in seq_along(file_paths)) {
+  coefficient_plot <- create_coefficient_plot(file_paths[i], titles[i])
+  specification_plot <- create_specification_plot(file_paths[i])
+  plots[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))  # Stack plots with adjusted heights
+}
+
+# Combine all stacked plots into a 2x5 grid
+final_plot <- wrap_plots(plots, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Positive Affect (PA) Multiverse Analysis (No Alpha Correction)", theme = theme(plot.title = element_text(size = 40, hjust = 0.5, face = "bold")))
+
+ggsave(
+  filename = "positive_affect_analysis_no_corr.png",  # File name for the image
+  plot = final_plot,                          # The plot to save
+  width = 52,                                 # Width of the image (in inches)
+  height = 20,                                 # Height of the image (in inches)
+  dpi = 300,                                   # Resolution (dots per inch)
+  limitsize = FALSE
+)
+```
+Stress
+```{r}
+# Define file paths for the five CSVs
+file_paths <- c(
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_RP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_SP_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_DS_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_SA_multi.csv",
+  "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_SS_multi.csv"
+)
+
+# Define titles for each coefficient plot
+titles <- c(
+  "ST and Reappraisal",
+  "ST and Suppression",
+  "ST and Distraction",
+  "ST and Selective Attention",
+  "ST and Situation Selection"
+)
+
+# Create and combine the plots
+plots <- list()
+for (i in seq_along(file_paths)) {
+  coefficient_plot <- create_coefficient_plot(file_paths[i], titles[i])
+  specification_plot <- create_specification_plot(file_paths[i])
+  plots[[i]] <- coefficient_plot / specification_plot + plot_layout(heights = c(2, 1))  # Stack plots with adjusted heights
+}
+
+# Combine all stacked plots into a 2x5 grid
+final_plot <- wrap_plots(plots, ncol = 5, guides = "collect") + 
+  plot_annotation(title = "Stress (ST) Multiverse Analysis (No Alpha Correction)", theme = theme(plot.title = element_text(size = 40, hjust = 0.5, face = "bold")))
+
+ggsave(
+  filename = "stress_analysis_no_corr.png",  # File name for the image
+  plot = final_plot,                          # The plot to save
+  width = 52,                                 # Width of the image (in inches)
+  height = 20,                                 # Height of the image (in inches)
+  dpi = 300, # Resolution (dots per inch)
+  limitsize = FALSE 
+)
+```
+
+
+In text for no corr
+```{r}
+# Organize sets of files for the new results (Multiverse_Combined_Results_No_Corr), only *_multi files
+
+all_blocks_no_corr <- list(
+  NA_multi = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_RP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_SP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_DS_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_SA_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\NA_SS_multi.csv"
+  ),
+  PA_multi = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_RP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_SP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_DS_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_SA_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\PA_SS_multi.csv"
+  ),
+  ST_multi = c(
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_RP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_SP_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_DS_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_SA_multi.csv",
+    "Z:\\Projects\\EMA_Project\\Scripts\\Output\\Multiverse_Combined_Results_No_Corr\\ST_SS_multi.csv"
+  )
+)
+
+# Helper to extract strategy name from file path
+get_strategy <- function(path) {
+  sub(".*_(RP|SP|DS|SA|SS)_multi\\.csv$", "\\1", path)
+}
+
+get_blocktype <- function(blockname) "Joint"
+
+results_summary_no_corr <- dplyr::bind_rows(lapply(names(all_blocks_no_corr), function(blockname) {
+  files <- all_blocks_no_corr[[blockname]]
+  dplyr::bind_rows(lapply(files, function(fp) {
+    dat <- read.csv(fp)
+    tibble::tibble(
+      Outcome = substr(blockname, 1, 2),  # NA, PA, ST
+      Block   = get_blocktype(blockname),
+      Strategy = get_strategy(fp),
+      Total   = nrow(dat),
+      Sig     = sum(dat$Lower > 0 | dat$Upper < 0, na.rm = TRUE)
+    )
+  }))
+})) %>%
+  dplyr::mutate(Percent = round(100 * Sig / Total, 3))
+
+print(results_summary_no_corr, n = Inf)
+
+# Helper: parse a shared spec id by removing "<Outcome>_<Strategy>_" and ".csv"
+parse_spec_id <- function(spec, outcome, strategy) {
+  spec |>
+    sub("\\.csv$", "", x = _) |>
+    sub(paste0("^", outcome, "_", strategy, "_"), "", x = _)
+}
+
+# Core: for an outcome ("NA", "PA", "ST") and its *_multi files, compute counts
+get_significance_summary_no_corr <- function(outcome, files_vec) {
+  dat_list <- lapply(files_vec, function(fp) {
+    strategy <- get_strategy(fp)
+
+    df <- read.csv(fp, stringsAsFactors = FALSE)
+
+    # Be robust to slight name differences in the specification column
+    spec_col <- if ("Specification" %in% names(df)) {
+      "Specification"
+    } else {
+      cand <- names(df)[grepl("pec", names(df), ignore.case = TRUE)]
+      if (length(cand) == 0) stop("Couldn't find a Specification column in: ", fp)
+      cand[1]
+    }
+
+    tibble::tibble(
+      spec_id  = parse_spec_id(df[[spec_col]], outcome, strategy),
+      Strategy = strategy,
+      SigFlag  = (df$Lower > 0 | df$Upper < 0)
+    )
+  })
+
+  combined_long <- dplyr::bind_rows(dat_list)
+
+  strategies <- c("RP", "SP", "DS", "SA", "SS")
+  wide <- combined_long |>
+    dplyr::distinct(spec_id, Strategy, .keep_all = TRUE) |>
+    tidyr::pivot_wider(
+      id_cols = spec_id,
+      names_from = Strategy,
+      values_from = SigFlag,
+      values_fill = FALSE
+    )
+
+  present <- intersect(strategies, names(wide))
+  wide <- wide |>
+    dplyr::mutate(
+      Outcome = outcome,
+      Num_Significant_Strategies = rowSums(dplyr::across(dplyr::all_of(present)), na.rm = TRUE)
+    )
+
+  total_specs <- nrow(wide)
+
+  distribution <- wide |>
+    dplyr::count(Outcome, Num_Significant_Strategies, name = "Num_Specifications") |>
+    tidyr::complete(
+      Outcome = outcome,
+      Num_Significant_Strategies = 0:5,
+      fill = list(Num_Specifications = 0)
+    ) |>
+    dplyr::mutate(Percent = round(100 * Num_Specifications / total_specs, 3)) |>
+    dplyr::arrange(Outcome, Num_Significant_Strategies)
+
+  list(
+    by_spec = wide |> dplyr::arrange(spec_id),
+    distribution = distribution
+  )
+}
+
+# Run for each outcome using the *_multi (joint) sets
+na_res_nc <- get_significance_summary_no_corr("NA", all_blocks_no_corr$NA_multi)
+pa_res_nc <- get_significance_summary_no_corr("PA", all_blocks_no_corr$PA_multi)
+st_res_nc <- get_significance_summary_no_corr("ST", all_blocks_no_corr$ST_multi)
+
+# Combined distribution table
+signif_strategy_distribution_no_corr <- dplyr::bind_rows(
+  na_res_nc$distribution, pa_res_nc$distribution, st_res_nc$distribution
+)
+
+print(signif_strategy_distribution_no_corr, n = Inf)
+```
+

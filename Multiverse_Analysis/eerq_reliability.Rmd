@@ -1,0 +1,52 @@
+---
+title: "Untitled"
+author: "Ben Scheve"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(psych)
+library(misty)
+
+intake_data <- read.csv("Z:/Projects/EMA_Project/Data/EMA_UCLA_Data/ERT_EMA_Intake.csv")
+
+erq_mapping <- list(
+  RP = c("ERQ_RP_01", "ERQ_RP_02", "ERQ_RP_03", "ERQ_RP_04", "ERQ_RP_05", "ERQ_RP_06"),
+  DS = c("ERQ_DS_01", "ERQ_DS_02", "ERQ_DS_03", "ERQ_DS_04", "ERQ_DS_05"),
+  SP = c("ERQ_SP_01", "ERQ_SP_02", "ERQ_SP_03", "ERQ_SP_04"),
+  SA = c("ERQ_SA_01", "ERQ_SA_02", "ERQ_SA_03", "ERQ_SA_04"),
+  SS = c("ERQ_SS_01", "ERQ_SS_02", "ERQ_SS_03")
+)
+
+# Omega for overall EERQ (all items)
+eerq_all_items <- unlist(erq_mapping)
+eerq_data <- na.omit(intake_data[, eerq_all_items])
+overall_omega <- omega(eerq_data, nfactors=1, plot=FALSE)
+cat("Overall EERQ omega total:", round(overall_omega$omega.tot, 3), "\n")
+
+# Omega for each subscale
+for (subscale in names(erq_mapping)) {
+  items <- erq_mapping[[subscale]]
+  subscale_data <- na.omit(intake_data[, items])
+  subscale_omega <- omega(subscale_data, nfactors=1, plot=FALSE)
+  cat(paste0("Subscale ", subscale, " omega total: "), round(subscale_omega$omega.tot, 3), "\n")
+}
+```
+
+```{r}
+# Overall EERQ omega
+overall_omega <- item.omega(eerq_data)
+omega_val <- as.numeric(overall_omega$result$Omega)
+cat("Overall EERQ omega (misty):", round(omega_val, 4), "\n")
+
+# Omega for each subscale
+for (subscale in names(erq_mapping)) {
+  items <- erq_mapping[[subscale]]
+  subscale_data <- na.omit(intake_data[, items])
+  subscale_omega <- item.omega(subscale_data)
+  omega_val <- as.numeric(subscale_omega$result$Omega)
+  cat(paste0("Subscale ", subscale, " omega (misty): "), round(omega_val, 4), "\n")
+}
+```
+
