@@ -2,11 +2,10 @@
 import pandas as pd
 import numpy as np
 
-# Data paths
+# CHANGE INPUT PATHS HERE
 EMA_path = "Z:\Projects\EMA_Project\Data\EMA_UCLA_Data"
 EMA_data_file = "ERT_EMA_DailySurvey.csv"
 Data_path = f"{EMA_path}/{EMA_data_file}"
-
 Intake_data_file = "ERT_EMA_Intake.csv"
 Data_path2 = f"{EMA_path}/{Intake_data_file}"
 

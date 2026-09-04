@@ -9,6 +9,7 @@ output: html_document
 library(psych)
 library(misty)
 
+# CHANGE INPUT PATH HERE
 intake_data <- read.csv("Z:/Projects/EMA_Project/Data/EMA_UCLA_Data/ERT_EMA_Intake.csv")
 
 erq_mapping <- list(
