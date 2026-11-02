@@ -1,0 +1,402 @@
+---
+title: "SIMresults"
+author: "Ben Scheve"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup}
+# ---- Setup ----
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(purrr)
+
+sims <- 0:999
+
+alpha_main  <- 0.05
+alpha_first <- 0.05
+
+figures_dir <- "Z:/Projects/EMA_Project/Scripts/Figures"
+
+point_size  <- 3
+point_alpha <- 0.3
+first_point_size  <- 2   
+first_point_alpha <- 0.125
+
+# ---- Studies ----
+studies <- list(
+  random = list(
+    label     = "Simulation2 (Random STMs)",
+    fig_title = "Simulation: Random State Transition Matrices",
+    base_dir  = "Z:/Projects/EMA_Project/Scripts/Output/Simulation2_Results",
+    prefix    = "SIM2",
+    families  = c(
+      "Null"      = "Sim_result_y_null_X_sim_%d.csv",
+      "Linear"    = "Sim_result_y_poly1_X_sim_%d.csv",
+      "Quadratic" = "Sim_result_y_poly2_X_sim_%d.csv"
+    )
+  ),
+  real = list(
+    label     = "Simulation (Real STMs)",
+    fig_title = "Simulation: Real State Transition Matrices",
+    base_dir  = "Z:/Projects/EMA_Project/Scripts/Output/Simulation_Results",
+    prefix    = "SIM",
+    families  = c(
+      "Null"      = "Sim_result_y_null_RP_sim_%d.csv",
+      "Linear"    = "Sim_result_y_poly1_RP_sim_%d.csv",
+      "Quadratic" = "Sim_result_y_poly2_RP_sim_%d.csv"
+    )
+  )
+)
+
+# Panel titles within each 3-panel figure
+panel_titles <- c(
+  "Null"      = "Null",
+  "Linear"    = "Linear",
+  "Quadratic" = "Quadratic"
+)
+
+needed_cols <- c("Specification", "Parameter", "Std_Err", "Observations",
+                 "FirstOrder_Param", "FirstOrder_StdErr", "FirstOrder_Obs")
+
+# ---- Helpers: reading & significance ----
+
+# Standardize/rename common column variants to canonical names
+standardize_cols <- function(df) {
+  rename_map <- c(
+    "Std.Err"              = "Std_Err",
+    "SE"                   = "Std_Err",
+    "N"                    = "Observations",
+    "FirstOrder.Parameter" = "FirstOrder_Param",
+    "FirstOrderParam"      = "FirstOrder_Param",
+    "FirstOrder.StdErr"    = "FirstOrder_StdErr",
+    "FO_StdErr"            = "FirstOrder_StdErr",
+    "FirstOrder.Obs"       = "FirstOrder_Obs",
+    "FO_Obs"               = "FirstOrder_Obs",
+    "Spec"                 = "Specification",
+    "P.val"                = "P_value"
+  )
+  # only rename variants that exist and whose canonical name isn't already present
+  old <- intersect(names(df), names(rename_map))
+  old <- old[!rename_map[old] %in% names(df)]
+  if (length(old)) {
+    df <- dplyr::rename(df, !!!setNames(old, rename_map[old]))  # new_name = old_name
+  }
+  df
+}
+
+# CI significance at a fixed alpha
+compute_ci_sig <- function(beta, se, alpha) {
+  ok    <- is.finite(beta) & is.finite(se) & se > 0
+  z     <- qnorm(1 - alpha / 2)
+  lower <- beta - z * se
+  upper <- beta + z * se
+  sig   <- ok & ((lower > 0) | (upper < 0))
+  tibble(sig = sig, lower = lower, upper = upper)
+}
+
+# Read a whole family (pattern) across sims into one combined DF
+read_family <- function(base_dir, pattern) {
+  files <- file.path(base_dir, sprintf(pattern, sims))
+  exists_mask <- file.exists(files)
+
+  if (!any(exists_mask)) stop("No matching files found for pattern: ", pattern)
+  if (any(!exists_mask)) {
+    message("Skipping missing files for pattern ", pattern, ": ",
+            paste(sims[!exists_mask], collapse = ", "))
+  }
+
+  read_one <- function(fp, sim_id) {
+    df <- suppressMessages(read_csv(fp, show_col_types = FALSE))
+    df$sim <- sim_id
+    standardize_cols(df)
+  }
+
+  purrr::map2_dfr(files[exists_mask], sims[exists_mask], read_one)
+}
+
+# Keep complete rows and add significance flags for both models
+prepare_family <- function(df, fam) {
+  missing_cols <- setdiff(needed_cols, names(df))
+  if (length(missing_cols)) {
+    stop("Missing columns for ", fam, ": ", paste(missing_cols, collapse = ", "))
+  }
+
+  df <- df %>% filter(if_all(all_of(needed_cols), ~ !is.na(.x)))
+
+  ci_main  <- compute_ci_sig(df$Parameter,        df$Std_Err,           alpha_main)
+  ci_first <- compute_ci_sig(df$FirstOrder_Param, df$FirstOrder_StdErr, alpha_first)
+
+  df %>%
+    mutate(
+      sig_main  = ci_main$sig,  lower_main  = ci_main$lower,  upper_main  = ci_main$upper,
+      sig_first = ci_first$sig, lower_first = ci_first$lower, upper_first = ci_first$upper
+    )
+}
+
+# ---- Helpers: plotting (multiverse-figure style) ----
+
+spec_levels <- c("Proportion", "Pearson", "Spearman", "Euclid", "Pairwise")
+
+spec_colors <- c(
+  "Proportion" = "steelblue",
+  "Pearson"    = "seagreen",
+  "Spearman"   = "seagreen",
+  "Euclid"     = "seagreen",
+  "Pairwise"   = "darkgoldenrod"
+)
+
+parse_specification <- function(spec_vec) {
+  tibble(
+    Proportion = as.integer(str_detect(spec_vec, "Proportion")),
+    Pearson    = as.integer(str_detect(spec_vec, "Pearson")),
+    Spearman   = as.integer(str_detect(spec_vec, "Spearman")),
+    Euclid     = as.integer(str_detect(spec_vec, "Euclid")),
+    Pairwise   = as.integer(str_detect(spec_vec, "Pairwise"))
+  )
+}
+
+# Second-order (circles) and first-order (triangles) coefficients, both ordered by the
+# second-order estimate. Colour = each model's own CI: green = excludes 0, tomato = includes 0.
+create_coefficient_plot <- function(df_sorted, title, tag, ylims) {
+  ggplot(df_sorted, aes(x = Index)) +
+    geom_point(aes(y = FirstOrder_Param, color = Color_First, shape = "First-Order"),
+               size = first_point_size, alpha = first_point_alpha) +
+    geom_point(aes(y = Parameter, color = Color, shape = "Second-Order"),
+               size = point_size, alpha = point_alpha) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 2) +
+    scale_color_identity() +
+    scale_shape_manual(
+      name   = NULL,
+      values = c("Second-Order" = 16, "First-Order" = 17),
+      breaks = c("Second-Order", "First-Order"),
+      guide  = guide_legend(override.aes = list(size = 10, alpha = 1, color = "grey30"))
+    ) +
+    coord_cartesian(ylim = ylims) +
+    labs(title = title, x = "", y = "Beta Coefficient") +
+    theme_minimal(base_size = 6) +
+    theme(
+      plot.title   = element_text(size = 44, hjust = 0.2, face = "bold"),
+      plot.tag     = element_text(size = 54, face = "bold"),
+      axis.text.x  = element_text(size = 34, face = "bold"),
+      axis.text.y  = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      axis.title.x = element_text(size = 1),
+      legend.text  = element_text(size = 34, face = "bold"),
+      plot.margin = margin(t = 5.5, r = 40, b = 5.5, l = 5.5)
+    )
+}
+
+create_specification_plot <- function(df_sorted) {
+  long_data <- parse_specification(df_sorted$Specification) %>%
+    mutate(Index = df_sorted$Index) %>%
+    pivot_longer(-Index, names_to = "Variable", values_to = "Value") %>%
+    mutate(
+      Variable = factor(Variable, levels = spec_levels),
+      Fill     = ifelse(Value == 1L, as.character(Variable), NA_character_)
+    )
+
+  ggplot(long_data, aes(x = Index, y = Variable, fill = Fill)) +
+    geom_tile(height = 0.8) +
+    scale_fill_manual(values = spec_colors, na.value = "white", guide = "none") +
+    labs(x = "Specification", y = "Analytic Dimension") +
+    theme_minimal(base_size = 8) +
+    theme(
+      axis.text.x  = element_text(size = 30, face = "bold"),
+      axis.text.y  = element_text(size = 30, face = "bold"),
+      axis.title.x = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position  = "none",
+      plot.margin = margin(t = 5.5, r = 40, b = 5.5, l = 5.5)
+    )
+}
+
+# One panel = coefficient plot stacked on spec heatmap
+make_panel <- function(df, title, tag, ylims) {
+  df_sorted <- df %>%
+    arrange(Parameter) %>%
+    mutate(
+      Index       = row_number(),
+      Color       = ifelse(sig_main,  "green3", "tomato"),
+      Color_First = ifelse(sig_first, "green3", "tomato")
+    )
+  create_coefficient_plot(df_sorted, title, tag, ylims) /
+    create_specification_plot(df_sorted) +
+    plot_layout(heights = c(2, 1))
+}
+
+# One figure per study = Null | Linear | Quadratic, tagged a/b/c,
+# sharing one y-range: the min and max across all three panels (both models)
+make_study_figure <- function(fam_list, fig_title) {
+  all_y <- unlist(map(fam_list, ~ c(.x$Parameter, .x$FirstOrder_Param)))
+  ylims <- range(all_y[is.finite(all_y)])
+
+  tags   <- letters[seq_along(fam_list)]
+  panels <- map2(seq_along(fam_list), names(fam_list),
+                 ~ make_panel(fam_list[[.x]], panel_titles[[.y]], tags[.x], ylims))
+
+  wrap_plots(panels, ncol = 3) +
+    plot_layout(guides = "collect") +
+    plot_annotation(
+      title = fig_title,
+      theme = theme(
+        plot.title      = element_text(size = 54, hjust = 0.5, face = "bold"),
+        legend.position = "bottom"
+      )
+    ) &
+    theme(legend.position = "bottom")
+}
+
+# ---- Helpers: summaries ----
+
+# Null: false positive rates for BOTH first- and second-order models
+summarise_null <- function(df) {
+  df %>%
+    summarise(
+      N_estimates   = n(),
+      Mean_N_Second = mean(Observations),
+      FPR_First     = 100 * mean(sig_first),
+      FPR_Second    = 100 * mean(sig_main),
+      .groups = "drop"
+    )
+}
+
+# Linear: power for BOTH first- and second-order models (both correctly specified)
+summarise_linear <- function(df) {
+  df %>%
+    summarise(
+      N_estimates   = n(),
+      Mean_N_First  = mean(FirstOrder_Obs),
+      Mean_N_Second = mean(Observations),
+      Power_First   = 100 * mean(sig_first),
+      Power_Second  = 100 * mean(sig_main),
+      .groups = "drop"
+    )
+}
+
+# Quadratic: detection for the SECOND-order model only
+# (first-order is misspecified for a quadratic truth, so it is not evaluated)
+summarise_power <- function(df) {
+  df %>%
+    summarise(
+      N_estimates   = n(),
+      Mean_N_Second = mean(Observations),
+      Power_Second  = 100 * mean(sig_main),
+      .groups = "drop"
+    )
+}
+```
+
+```{r load-data}
+# Read every family once; everything below uses study_data
+study_data <- list()
+
+for (s in names(studies)) {
+  st <- studies[[s]]
+  for (fam in names(st$families)) {
+    message("Processing: ", st$label, " / ", fam)
+    study_data[[st$label]][[fam]] <-
+      read_family(st$base_dir, st$families[[fam]]) %>%
+      prepare_family(fam)
+  }
+}
+```
+
+# Figures
+
+```{r study-figures, fig.width = 32, fig.height = 20}
+for (s in names(studies)) {
+  st <- studies[[s]]
+  p <- make_study_figure(study_data[[st$label]], st$fig_title)
+  print(p)
+  ggsave(
+    filename  = file.path(figures_dir, paste0(st$prefix, "_multiverse_panels.png")),
+    plot      = p,
+    width     = 32,
+    height    = 20,
+    dpi       = 300,
+    limitsize = FALSE
+  )
+}
+```
+
+# Tables: both studies
+
+## Percent significant (all families, both models)
+
+```{r overall-summary}
+imap_dfr(study_data, function(fams, study) {
+  imap_dfr(fams, function(df, fam) {
+    tibble(
+      Study  = study,
+      Family = fam,
+      Series = c("Second-Order", "First-Order"),
+      Percent_Significant = 100 * c(mean(df$sig_main), mean(df$sig_first))
+    )
+  })
+}) %>%
+  knitr::kable(digits = 3)
+```
+
+```{r table-data}
+null_data   <- bind_rows(map(study_data, "Null"),      .id = "Study")
+linear_data <- bind_rows(map(study_data, "Linear"),    .id = "Study")
+quad_data   <- bind_rows(map(study_data, "Quadratic"), .id = "Study")
+```
+
+## Null: false positive rate (all specifications pooled)
+
+Under the null, these percentages are false positive rates. Nominal is 5%.
+
+```{r null-overall}
+null_data %>%
+  group_by(Study) %>%
+  summarise_null() %>%
+  knitr::kable(digits = 3)
+```
+
+## Null: false positive rate by specification
+
+```{r null-by-spec}
+null_data %>%
+  group_by(Study, Specification) %>%
+  summarise_null() %>%
+  knitr::kable(digits = 3)
+```
+
+## Linear: first- vs second-order power (all specifications pooled)
+
+Both models are correctly specified for a linear truth, so a significant estimate counts as a correct detection for each. Not broken down by specification.
+
+```{r linear-overall}
+linear_data %>%
+  group_by(Study) %>%
+  summarise_linear() %>%
+  knitr::kable(digits = 2)
+```
+
+## Quadratic: second-order detection and false negative rate (all specifications pooled)
+
+A significant second-order estimate counts as a correct detection, since the true effect is nonzero; a non-significant one is a false negative. First-order results are intentionally excluded because that model is misspecified for a quadratic relationship.
+
+```{r quad-overall}
+quad_data %>%
+  group_by(Study) %>%
+  summarise_power() %>%
+  knitr::kable(digits = 3)
+```
+
+## Quadratic: second-order detection and false negative rate by specification
+
+```{r quad-by-spec}
+quad_data %>%
+  group_by(Study, Specification) %>%
+  summarise_power() %>%
+  knitr::kable(digits = 3)
+```

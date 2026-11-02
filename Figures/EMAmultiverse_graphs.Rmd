@@ -1,0 +1,351 @@
+---
+title: "EMAMultiverseGraphs"
+author: "Ben Scheve"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup}
+# Load necessary packages
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(patchwork)
+library(readr)
+library(stringr)
+library(purrr)
+
+# ---- Paths & labels ----
+results_dir <- "Z:/Projects/EMA_Project/Scripts/Output/Multiverse_Combined_Results"
+
+outcomes <- c(
+  "NA" = "Negative Affect",
+  "PA" = "Positive Affect",
+  "ST" = "Stress"
+)
+
+strategies <- c(
+  "RP" = "Reappraisal",
+  "SP" = "Suppression",
+  "DS" = "Distraction",
+  "SA" = "Selective Attention",
+  "SS" = "Situation Selection"
+)
+
+block_labels <- c("multi" = "Joint", "single" = "Independent")
+
+# Y-axis ranges 
+ylims_main  <- c(-0.4, 0.8)    # joint (second-order) figure
+ylims_indep <- c(-0.4, 0.8)    # independent figure
+ylims_nocov <- c(-0.4, 0.8)   # no-covariate figures
+
+# Add an "n points outside y-axis range" subtitle to any panel that drops points
+annotate_out_of_range <- TRUE
+
+# ---- Read every CSV once ----
+read_block <- function(outcome, strategy, block) {
+  fp <- file.path(results_dir, paste0(outcome, "_", strategy, "_", block, ".csv"))
+  df <- read.csv(fp, stringsAsFactors = FALSE)
+  df$Outcome  <- outcome
+  df$Strategy <- strategy
+  df$Block    <- block
+  df$Sig      <- df$Lower > 0 | df$Upper < 0
+  df
+}
+
+file_grid <- expand.grid(
+  outcome  = names(outcomes),
+  strategy = names(strategies),
+  block    = names(block_labels),
+  stringsAsFactors = FALSE
+)
+
+all_data <- pmap_dfr(file_grid, read_block)
+
+# ---- Specification parsing (vectorised) ----
+parse_specification <- function(spec) {
+  tibble(
+    Proportion             = as.integer(grepl("Proportion", spec)),
+    Pearson                = as.integer(grepl("Pearson", spec)),
+    Spearman               = as.integer(grepl("Spearman", spec)),
+    Euclid                 = as.integer(grepl("Euclid", spec)),
+    Pairwise               = as.integer(grepl("Pairwise", spec)),
+    Entropy                = as.integer(grepl("_Entropy", spec) & !grepl("No_Entropy", spec)),
+    More_Than_10_Responses = as.integer(grepl("More_Than_10_Responses|MT10R_AND_MT20S", spec)),
+    More_Than_20_Seconds   = as.integer(grepl("More_Than_20_Seconds|MT10R_AND_MT20S", spec)),
+    Start_Date             = as.integer(grepl("Start_Date|Date_and_Time", spec)),
+    Response_Window        = as.integer(grepl("Response_Window|Date_and_Time", spec)),
+    Demographics           = as.integer(grepl("_Demographics", spec) & !grepl("No_Demographics", spec)),
+    Baseline_ER            = as.integer(grepl("_Baseline_ER", spec) & !grepl("No_Baseline_ER", spec))
+  )
+}
+
+covariate_dims <- c("Entropy", "Start_Date", "Response_Window", "Demographics", "Baseline_ER")
+
+contains_covariate <- function(spec) {
+  rowSums(parse_specification(spec)[, covariate_dims]) > 0
+}
+
+spec_levels <- c(
+  ">10_Resp", ">20_Sec", "Proportion",
+  "Pearson", "Spearman", "Euclid", "Pairwise",
+  "Entropy", "Start_Date", "Resp_Wind", "Demographics", "Baseline_ER"
+)
+
+spec_colors <- c(
+  ">10_Resp" = "firebrick", ">20_Sec" = "firebrick",
+  "Proportion" = "steelblue",
+  "Pearson" = "seagreen", "Spearman" = "seagreen", "Euclid" = "seagreen",
+  "Pairwise" = "darkgoldenrod",
+  "Entropy" = "sienna", "Start_Date" = "sienna", "Resp_Wind" = "sienna",
+  "Demographics" = "sienna", "Baseline_ER" = "sienna"
+)
+
+# ---- Plot builders ----
+create_coefficient_plot <- function(data, title, ylims, title_size = 44) {
+  data$Color <- ifelse(data$Sig, "green3", "tomato")
+  n <- nrow(data)
+
+  in_range <- !is.na(data$Parameter) &
+    data$Parameter >= ylims[1] & data$Parameter <= ylims[2]
+  n_out <- sum(!is.na(data$Parameter) & !in_range)
+
+  subtitle <- if (annotate_out_of_range && n_out > 0) {
+    paste0(n_out, " of ", n, " point", ifelse(n_out == 1, "", "s"),
+           " outside y-axis range (not shown)")
+  } else NULL
+
+  ggplot(data[in_range, ], aes(x = Index, y = Parameter)) +
+    geom_point(aes(color = Color), size = 4, alpha = 0.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 2) +
+    scale_color_identity() +
+    scale_y_continuous(limits = ylims) +
+    scale_x_continuous(limits = c(0.5, n + 0.5)) +   # keeps alignment with the spec heatmap
+    labs(title = title, subtitle = subtitle, x = "", y = "Beta Coefficient") +
+    theme_minimal(base_size = 6) +
+    theme(
+      plot.title    = element_text(size = title_size, hjust = 0.2, face = "bold"),
+      plot.subtitle = element_text(size = 28, hjust = 0.2, face = "italic"),
+      axis.text.x   = element_text(size = 34, face = "bold"),
+      axis.text.y   = element_text(size = 34, face = "bold"),
+      axis.title.y  = element_text(size = 34, face = "bold"),
+      axis.title.x  = element_text(size = 1),
+      legend.position = "none"
+    )
+}
+
+create_specification_plot <- function(data) {
+  n <- nrow(data)
+
+  long_data <- parse_specification(data$Specification) %>%
+    mutate(Index = data$Index) %>%
+    pivot_longer(-Index, names_to = "Variable", values_to = "Value") %>%
+    mutate(
+      Variable = recode(Variable,
+                        More_Than_10_Responses = ">10_Resp",
+                        More_Than_20_Seconds   = ">20_Sec",
+                        Response_Window        = "Resp_Wind"),
+      Variable = factor(Variable, levels = spec_levels),
+      Fill     = ifelse(Value == 1L, as.character(Variable), NA_character_)
+    )
+
+  ggplot(long_data, aes(x = Index, y = Variable, fill = Fill)) +
+    geom_tile(height = 0.8) +
+    scale_fill_manual(values = spec_colors, na.value = "white", guide = "none") +
+    scale_x_continuous(limits = c(0.5, n + 0.5)) +
+    labs(x = "Specification", y = "Analytic Dimension") +
+    theme_minimal(base_size = 8) +
+    theme(
+      axis.text.x  = element_text(size = 30, face = "bold"),
+      axis.text.y  = element_text(size = 30, face = "bold"),
+      axis.title.x = element_text(size = 34, face = "bold"),
+      axis.title.y = element_text(size = 34, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position  = "none"
+    )
+}
+
+# One panel = coefficient plot over spec heatmap (rows kept in file order, as before)
+make_panel <- function(data, title, ylims, title_size = 44) {
+  data <- data %>% mutate(Index = row_number())
+  create_coefficient_plot(data, title, ylims, title_size) /
+    create_specification_plot(data) +
+    plot_layout(heights = c(2, 1))
+}
+
+# One outcome row = five strategy panels
+make_outcome_row <- function(data, outcome, block, ylims, fig_title,
+                             panel_title_size = 44, fig_title_size = 54) {
+  panels <- lapply(names(strategies), function(s) {
+    d <- data %>% filter(Outcome == outcome, Strategy == s, Block == block)
+    make_panel(d, paste0(outcome, " and ", strategies[[s]]), ylims, panel_title_size)
+  })
+  wrap_plots(panels, ncol = 5, guides = "collect") +
+    plot_annotation(
+      title = fig_title,
+      theme = theme(plot.title = element_text(size = fig_title_size, hjust = 0.5, face = "bold"))
+    )
+}
+```
+
+# Joint (second-order) multiverse
+
+```{r joint-figure}
+final_plot_na <- make_outcome_row(all_data, "NA", "multi", ylims_main,
+                                  "Second-Order Multiverse Analysis: Negative Affect (NA)")
+final_plot_pa <- make_outcome_row(all_data, "PA", "multi", ylims_main,
+                                  "Second-Order Multiverse Analysis: Positive Affect (PA)")
+final_plot_st <- make_outcome_row(all_data, "ST", "multi", ylims_main,
+                                  "Second-Order Multiverse Analysis: Stress (ST)")
+
+final_plot_all <- final_plot_na / final_plot_pa / final_plot_st +
+  plot_layout(ncol = 1) +
+  plot_annotation(
+    title = "Second-Order Multiverse Analysis",
+    theme = theme(plot.title = element_text(size = 64, hjust = 0.5, face = "bold")),
+    tag_levels = "a"
+  )
+
+ggsave(
+  filename = "second_order_multiverse_analysis.png",
+  plot = final_plot_all,
+  width = 60,
+  height = 60,
+  dpi = 300,
+  limitsize = FALSE
+)
+```
+
+# Independent multiverse
+
+```{r independent-figure}
+indep_plot_na <- make_outcome_row(all_data, "NA", "single", ylims_indep,
+                                  "Independent Multiverse Analysis: Negative Affect (NA)")
+indep_plot_pa <- make_outcome_row(all_data, "PA", "single", ylims_indep,
+                                  "Independent Multiverse Analysis: Positive Affect (PA)")
+indep_plot_st <- make_outcome_row(all_data, "ST", "single", ylims_indep,
+                                  "Independent Multiverse Analysis: Stress (ST)")
+
+indep_plot_all <- indep_plot_na / indep_plot_pa / indep_plot_st +
+  plot_layout(ncol = 1) +
+  plot_annotation(
+    title = "Independent Multiverse Analysis",
+    theme = theme(plot.title = element_text(size = 64, hjust = 0.5, face = "bold")),
+    tag_levels = "a"
+  )
+
+ggsave(
+  filename = "independent_multiverse_analysis.png",
+  plot = indep_plot_all,
+  width = 60,
+  height = 60,
+  dpi = 300,
+  limitsize = FALSE
+)
+```
+
+In text results
+```{r intext-results}
+results_summary <- all_data %>%
+  group_by(Outcome, Block, Strategy) %>%
+  summarise(
+    Total = n(),
+    Sig   = sum(Sig, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Block    = ifelse(Block == "multi", "Joint", "Single"),
+    Outcome  = factor(Outcome,  levels = names(outcomes)),
+    Strategy = factor(Strategy, levels = names(strategies)),
+    Percent  = round(100 * Sig / Total, 3)
+  ) %>%
+  arrange(Block, Outcome, Strategy)
+
+print(results_summary, n = Inf)
+```
+
+```{r intext-strategy-count}
+# Helper: parse a shared spec id by removing "<Outcome>_<Strategy>_" and ".csv"
+parse_spec_id <- function(spec, outcome, strategy) {
+  spec |>
+    sub("\\.csv$", "", x = _) |>
+    sub(paste0("^", outcome, "_", strategy, "_"), "", x = _)
+}
+
+# Core: for an outcome ("NA", "PA", "ST"), count how many strategies are significant per spec (joint models)
+get_significance_summary <- function(outcome) {
+  wide <- all_data %>%
+    filter(Outcome == outcome, Block == "multi") %>%
+    mutate(spec_id = parse_spec_id(Specification, outcome, Strategy)) %>%
+    distinct(spec_id, Strategy, .keep_all = TRUE) %>%
+    select(spec_id, Strategy, Sig) %>%
+    pivot_wider(id_cols = spec_id, names_from = Strategy, values_from = Sig,
+                values_fill = FALSE)
+
+  present <- intersect(names(strategies), names(wide))
+  wide <- wide %>%
+    mutate(
+      Outcome = outcome,
+      Num_Significant_Strategies = rowSums(across(all_of(present)), na.rm = TRUE)
+    )
+
+  total_specs <- nrow(wide)
+
+  distribution <- wide %>%
+    count(Outcome, Num_Significant_Strategies, name = "Num_Specifications") %>%
+    complete(
+      Outcome = outcome,
+      Num_Significant_Strategies = 0:5,
+      fill = list(Num_Specifications = 0)
+    ) %>%
+    mutate(Percent = round(100 * Num_Specifications / total_specs, 3)) %>%
+    arrange(Outcome, Num_Significant_Strategies)
+
+  list(
+    by_spec = wide %>% arrange(spec_id),
+    distribution = distribution
+  )
+}
+
+na_res <- get_significance_summary("NA")
+pa_res <- get_significance_summary("PA")
+st_res <- get_significance_summary("ST")
+
+# Combined distribution table
+signif_strategy_distribution <- bind_rows(
+  na_res$distribution, pa_res$distribution, st_res$distribution
+)
+
+print(signif_strategy_distribution, n = Inf)
+```
+
+--NO COVARIATES--
+```{r no-covariates}
+nocov_data <- all_data %>%
+  filter(Block == "multi", !contains_covariate(Specification))
+
+nocov_fig_title_size <- c("NA" = 50, "PA" = 40, "ST" = 40)
+nocov_files <- c(
+  "NA" = "negative_affect_analysis_no_covariate.png",
+  "PA" = "positive_affect_analysis_no_covariate.png",
+  "ST" = "stress_analysis_no_covariate.png"
+)
+
+for (o in names(outcomes)) {
+  p <- make_outcome_row(
+    nocov_data, o, "multi", ylims_nocov,
+    fig_title        = paste0(outcomes[[o]], " (", o, ") Multiverse Analysis\n(no covariate specifications)"),
+    panel_title_size = 38,
+    fig_title_size   = nocov_fig_title_size[[o]]
+  )
+  ggsave(
+    filename = nocov_files[[o]],
+    plot = p,
+    width = 52,
+    height = 20,
+    dpi = 300,
+    limitsize = FALSE
+  )
+}
+```
